@@ -1,0 +1,18 @@
+(()=>{
+const hero=document.querySelector('.hero'),range=document.querySelector('#refraction');
+function refract(value){hero.style.setProperty('--prism-x',`${(value-50)*.32}px`);hero.style.setProperty('--prism-hue',`${(value-50)*.7}deg`);range.value=value;}
+range.addEventListener('input',()=>refract(Number(range.value)));
+hero.addEventListener('pointermove',e=>{if(e.pointerType==='mouse'&&!e.target.closest('.prism-control')){const r=hero.getBoundingClientRect();refract(Math.round(Math.max(0,Math.min(100,(e.clientX-r.left)/r.width*100))));}});
+const play=document.querySelector('#play'),sound=document.querySelector('#sound'),film=document.querySelector('.film'),text=document.querySelector('#film-text'),caption=document.querySelector('#film-caption'),progress=document.querySelector('#film-progress'),time=document.querySelector('#film-time'),status=document.querySelector('#film-status');
+const scenes=[['Cultura não é<br>uma coisa só.','Uma mesma luz. Infinitas perspectivas.'],['É encontro.','Vozes, memórias e expressões que se cruzam.'],['Arte é<br>liberdade.','Espaço para imaginar outras formas de existir.'],['Audiovisual<br>é ponte.','Imagem, tempo e som entre diferentes realidades.'],['Infinitas<br>perspectivas.','A diferença amplia o que podemos ver.'],['PRISMA','Cultura & Audiovisual. Uma mesma luz.']];
+let elapsed=0,running=false,last=0,frame=0,scene=-1,audio=null,gain=null,voices=[],soundOn=false;
+function draw(){const index=Math.min(5,Math.floor(elapsed/4));if(index!==scene){scene=index;text.innerHTML=scenes[index][0];caption.textContent=scenes[index][1];film.style.setProperty('--scene',index); }progress.style.width=`${elapsed/24*100}%`;time.textContent=`00:${String(Math.floor(elapsed)).padStart(2,'0')} / 00:24`;}
+function setAudio(){if(gain&&audio){gain.gain.cancelScheduledValues(audio.currentTime);gain.gain.setTargetAtTime(running&&soundOn?.045:0,audio.currentTime,.15);}}
+async function prepareAudio(){if(!audio){const Context=window.AudioContext||window.webkitAudioContext;if(!Context)throw Error('unsupported');audio=new Context();gain=audio.createGain();gain.gain.value=0;gain.connect(audio.destination);[130.81,196,261.63].forEach((frequency,i)=>{const osc=audio.createOscillator();osc.type='sine';osc.frequency.value=frequency;osc.detune.value=i*3;osc.connect(gain);osc.start();voices.push(osc);});}await audio.resume();}
+function pause(){running=false;cancelAnimationFrame(frame);film.classList.remove('playing');play.textContent=elapsed>=24?'Reproduzir novamente':'Continuar manifesto';status.textContent=elapsed>=24?'Manifesto concluído.':'Manifesto pausado.';setAudio();}
+function tick(now){if(!running)return;elapsed=Math.min(24,elapsed+(now-last)/1000);last=now;draw();if(elapsed>=24){pause();return;}frame=requestAnimationFrame(tick);}
+play.addEventListener('click',async()=>{if(running){pause();return;}if(elapsed>=24){elapsed=0;scene=-1;}running=true;last=performance.now();play.textContent='Pausar manifesto';status.textContent='Manifesto em reprodução.';film.classList.add('playing');if(soundOn){try{await prepareAudio();}catch{soundOn=false;sound.textContent='Som indisponível';sound.setAttribute('aria-pressed','false');}}setAudio();draw();frame=requestAnimationFrame(tick);});
+sound.addEventListener('click',async()=>{soundOn=!soundOn;if(soundOn){try{await prepareAudio();}catch{soundOn=false;sound.textContent='Som indisponível';status.textContent='Este navegador não disponibilizou o áudio.';return;}}sound.setAttribute('aria-pressed',String(soundOn));sound.textContent=soundOn?'Som: ligado':'Som: desligado';setAudio();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&running)pause();});draw();
+
+})();

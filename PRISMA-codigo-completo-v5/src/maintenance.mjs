@@ -1,0 +1,26 @@
+import {one,run} from './db.mjs';
+import {currentAccount,requireAccount,csrf,fail} from './auth.mjs';
+import {bounded} from './portal.mjs';
+const defaults={enabled:0,message:'Estamos preparando novos encontros. A PRISMA volta em breve.',return_note:'',version:0};
+const json=(d,status=200)=>Response.json(d,{status,headers:{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+export const maintenanceState=async env=>await one(env,"SELECT enabled,message,return_note,version FROM site_maintenance WHERE id='main'")||defaults;
+export async function maintenanceApi(request,env,url){if(url.pathname==='/api/maintenance/status'&&request.method==='GET')return json({enabled:!!(await maintenanceState(env)).enabled,exempt:(await currentAccount(request,env))?.role==='admin'});
+ if(url.pathname!=='/api/admin/maintenance')return null;
+ await requireAccount(request,env,'admin');if(request.method==='GET')return json(await maintenanceState(env));
+ if(request.method!=='PUT')throw fail(405,'Método não permitido.');csrf(request);let d;try{d=JSON.parse(new TextDecoder().decode(await bounded(request,5000)));}catch(e){throw e.status?e:fail(400,'Dados inválidos.');}
+ if(!d||typeof d.enabled!=='boolean'||typeof d.message!=='string'||d.message.length>600||typeof d.return_note!=='string'||d.return_note.length>160||!Number.isSafeInteger(d.version)||d.version<0)throw fail(400,'Confira a mensagem e a previsão de retorno.');
+ const result=await run(env,"INSERT INTO site_maintenance(id,enabled,message,return_note,version) SELECT 'main',?,?,?,1 WHERE ?=0 OR EXISTS(SELECT 1 FROM site_maintenance WHERE id='main') ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,message=excluded.message,return_note=excluded.return_note,version=site_maintenance.version+1 WHERE site_maintenance.version=?",Number(d.enabled),d.message.trim()||defaults.message,d.return_note.trim(),d.version,d.version);
+ if(!result.meta.changes)throw fail(409,'A configuração mudou em outra aba. Atualize antes de salvar novamente.');return json(await maintenanceState(env));
+}
+const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function page(s){return `<!doctype html><html lang="pt-BR" data-maintenance-page><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Estamos em manutenção — PRISMA</title><style>*{box-sizing:border-box}body{margin:0;background:#f7f7f2;color:#181818;font-family:Arial,sans-serif;min-height:100svh;display:flex;flex-direction:column}header,footer{padding:28px 6%;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap}header{border-bottom:1px solid #d8d8d1}.brand{font-size:29px;letter-spacing:-2px;font-weight:900}.tag{font-size:13px;letter-spacing:2px;align-self:center}main{flex:1;padding:65px 6%;max-width:1200px;width:100%;margin:auto}.label{font-size:14px;letter-spacing:2px}h1{font-size:clamp(46px,8vw,100px);font-weight:500;letter-spacing:-.055em;line-height:1.08;margin:30px 0}p{font-size:18px;line-height:1.7;max-width:680px;white-space:pre-wrap;overflow-wrap:anywhere}.light{height:5px;max-width:680px;margin:35px 0;background:linear-gradient(90deg,#b8b7f1,#f1bdd2,#ecd691,#a5cde5)}.return{font-size:16px}a{color:inherit;text-underline-offset:5px}footer{font-size:14px;border-top:1px solid #d8d8d1}@media(prefers-reduced-motion:no-preference){main{animation:appear .7s ease-out}@keyframes appear{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}}</style></head><body><header><span class="brand">PRISMA</span><span class="tag">CULTURA & AUDIOVISUAL</span></header><main><div class="label">UMA PAUSA PARA CRIAR.</div><h1>Estamos em<br>manutenção.</h1><div class="light" aria-hidden="true"></div><p>${escape(s.message)}</p>${s.return_note?'<p class="return"><strong>Previsão de retorno</strong><br>'+escape(s.return_note)+'</p>':''}</main><footer><span>Cultura não é uma coisa só.</span><a href="/administrador">Acesso do administrador</a></footer><script src="/maintenance-client.js" defer></script></body></html>`;}
+export async function maintenanceGate(request,env,url){const p=url.pathname;
+ if(p==='/api/maintenance/status'||p==='/api/admin/maintenance'||['/administrador','/administrador/','/admin.html','/painel','/painel/','/style.css','/events.css','/portal.css','/tickets.css','/login.js','/portal-common.js','/maintenance-client.js'].includes(p))return null;
+ if(p==='/api/auth/logout')return null;
+ if((await currentAccount(request,env))?.role==='admin')return null;
+ const s=await maintenanceState(env);if(!s.enabled)return null;
+ if(p==='/api/auth/login'&&request.method==='POST'){try{const raw=await bounded(request.clone(),24000);if(JSON.parse(new TextDecoder().decode(raw)).role==='admin')return null;}catch{}}
+ const headers={'Cache-Control':'private, no-store','Retry-After':'60','X-Content-Type-Options':'nosniff'};
+ if(p.startsWith('/api/')||!['GET','HEAD'].includes(request.method))return Response.json({error:'Estamos em manutenção. Tente novamente em breve.',maintenance:true},{status:503,headers});
+ return new Response(request.method==='HEAD'?null:page(s),{status:503,headers:{...headers,'Content-Type':'text/html; charset=utf-8'}});
+}
